@@ -41,6 +41,7 @@
 #include <vlc_common.h>
 #include <vlc_filter.h>
 #include <vlc_text_style.h>
+#include <vlc_configuration.h>
 
 /* Freetype */
 #include <ft2build.h>
@@ -1687,7 +1688,7 @@ static paragraph_t * BuildParagraph( filter_t *p_filter,
                                      unsigned *pi_max_advance_x )
 {
 #ifdef HAVE_FRIBIDI
-    bool b_apply_rtl = var_InheritBool( p_filter, "freetype-rtl-fix" )
+    bool b_apply_rtl = ( config_GetInt( "freetype-rtl-fix" ) != 0 )
                     && ShouldApplyRtlEmbedding( p_uchars, i_size );
 
     uni_char_t *p_wrapped_uchars = NULL;

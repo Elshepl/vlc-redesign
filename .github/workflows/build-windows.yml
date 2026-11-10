@@ -70,6 +70,13 @@ jobs:
       - name: Build image
         run: docker build -t vlc-win64-redesign -f extras/juxtopposed/win64.Dockerfile extras/juxtopposed
 
+      - name: Restore ccache
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4
+        with:
+          path: ccache
+          key: ccache-win64-${{ github.sha }}
+          restore-keys: ccache-win64-
+
       - name: Prebuilt contribs
         run: |
           mkdir -p cache
@@ -84,15 +91,16 @@ jobs:
 
       - name: Build
         run: |
-          mkdir -p out
+          mkdir -p out ccache
           docker run --rm -u root -v vlc-build:/build vlc-win64-redesign chown videolan:videolan /build
           # the image's user is not the runner's: let it write the package
           # (and the symbol maps)
           mkdir -p symbols
-          chmod 777 out symbols
+          chmod 777 out symbols ccache
           docker run --rm \
             -e CONTRIB_ARCHIVE="/cache/$CONTRIB" -e STRIP=1 -e SYMBOLS=/symbols \
-            -v "$PWD:/src:ro" -v "$PWD/cache:/cache:ro" -v "$PWD/out:/out" -v "$PWD/symbols:/symbols" -v vlc-build:/build \
+            -e CCACHE_DIR=/ccache -e USE_CCACHE=1 \
+            -v "$PWD:/src:ro" -v "$PWD/cache:/cache:ro" -v "$PWD/out:/out" -v "$PWD/symbols:/symbols" -v vlc-build:/build -v "$PWD/ccache:/ccache" \
             vlc-win64-redesign sh -c 'cp /src/extras/juxtopposed/win64-docker.sh /tmp/build.sh && exec sh /tmp/build.sh -r'
           test -s out/vlc.exe
           test -s out/plugins/gui/libqt_plugin.dll

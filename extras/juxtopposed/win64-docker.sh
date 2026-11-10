@@ -167,6 +167,15 @@ if [ "$arch" = x86_64 ]; then
 fi
 export JOBS="$jobs"
 rm -rf /build/package
+# If USE_CCACHE=1 and ccache is available, wrap the compiler with it for
+# faster incremental CI builds. CCACHE_DIR is set by the workflow.
+if [ "${USE_CCACHE:-}" = 1 ] && command -v ccache > /dev/null 2>&1; then
+    export CC="ccache $triplet-gcc"
+    export CXX="ccache $triplet-g++"
+    ccache --max-size=2G
+    ccache --zero-stats 2>/dev/null || true
+    echo "ccache enabled (dir: ${CCACHE_DIR:-~/.ccache})"
+fi
 # Fail instead of silently rebuilding every contrib from source.
 sed 's/|| PREBUILT_FAILED=yes/|| exit 1/' extras/package/win32/build.sh \
     > extras/package/win32/build-prebuilt-only.sh
@@ -207,3 +216,7 @@ strip_package
 rsync -rt --omit-dir-times --delete --checksum --exclude=/portable --exclude='*.old-*' \
     /build/package/ /out/
 echo "Package ready: $(du -sh /out | cut -f1)"
+# Print ccache stats if it was used
+if [ "${USE_CCACHE:-}" = 1 ] && command -v ccache > /dev/null 2>&1; then
+    ccache --show-stats
+fi
