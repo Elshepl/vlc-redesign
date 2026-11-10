@@ -215,9 +215,12 @@ vlc_module_begin ()
         change_integer_list( pi_text_direction, ppsz_text_direction )
         change_safe()
             add_bool( "freetype-rtl-fix", true,
-              N_("Right-to-Left (RTL) subtitle mode"),
-              N_("Automatically wraps predominantly right-to-left lines with RTL embedding, "
-                 "ensuring dialogue dashes and punctuation stay in the correct visual order.") )
+              N_("Right-to-Left (RTL) subtitle fix"),
+              N_("Arabic and Hebrew lines whose final punctuation is stored at "
+                 "the start of the line and dialogue dashes at the end "
+                 "(a legacy convention of older subtitle files) have their ends "
+                 "swapped so dialogue dashes appear at the start and punctuation "
+                 "at the end.") )
         change_safe()
 #endif
 

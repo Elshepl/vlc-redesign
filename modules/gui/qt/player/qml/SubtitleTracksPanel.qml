@@ -575,7 +575,7 @@ ColumnLayout {
             onReset: Player.stepSubtitleTextScale(0, false)
         }
 
-        // Toggle Right-to-Left (RTL) embedding for Arabic and Hebrew subtitles
+        // Arabic and Hebrew: swap legacy-order line ends (RTL on/off)
         RowLayout {
             objectName: "subtitleRtlFixRow"
             Layout.fillWidth: true
@@ -584,7 +584,7 @@ ColumnLayout {
             Controls.Label {
                 Layout.fillWidth: true
                 horizontalAlignment: Text.AlignLeft
-                text: qsTr("RTL")
+                text: qsTr("RTL on/off")
                 elide: Text.ElideRight
                 color: VLCStyle.redesign.color("#969696", "#4d4d4d")
                 font.family: VLCStyle.redesign.fontFamily
@@ -594,7 +594,7 @@ ColumnLayout {
                 objectName: "subtitleRtlFixToggle"
                 text: Player.subtitleRtlFix ? qsTr("On") : qsTr("Off")
                 autoRepeat: false
-                Accessible.name: qsTr("Toggle Right-to-Left (RTL) mode")
+                Accessible.name: qsTr("RTL on/off")
                 onClicked: Player.subtitleRtlFix = !Player.subtitleRtlFix
             }
         }

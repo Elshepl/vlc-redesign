@@ -41,7 +41,6 @@
 #include <vlc_common.h>
 #include <vlc_filter.h>
 #include <vlc_text_style.h>
-#include <vlc_configuration.h>
 
 /* Freetype */
 #include <ft2build.h>
@@ -1635,9 +1634,6 @@ error:
 }
 
 #ifdef HAVE_FRIBIDI
-#define UNICODE_RLE 0x202B
-#define UNICODE_PDF 0x202C
-
 /* Right-to-left scripts of the Basic Multilingual Plane: Hebrew, Arabic and
  * its extensions, and the Arabic presentation forms */
 static bool IsRtlScriptCodePoint( uni_char_t c )
@@ -1653,29 +1649,216 @@ static bool IsLatinLetterCodePoint( uni_char_t c )
         || ( c >= 0x00C0 && c <= 0x024F );
 }
 
+static bool IsSentenceMark( uni_char_t c )
+{
+    switch( c )
+    {
+        case '.': case ',': case '!': case '?': case ':': case ';':
+        case 0x060C: /* Arabic comma */
+        case 0x061B: /* Arabic semicolon */
+        case 0x061F: /* Arabic question mark */
+            return true;
+        default:
+            return false;
+    }
+}
+
+static bool IsDash( uni_char_t c )
+{
+    return c == '-' || c == 0x2013 || c == 0x2014;
+}
+
+static bool HasBidiControlChar( const uni_char_t *p_cp, int i_size )
+{
+    for( int i = 0; i < i_size; i++ )
+    {
+        uni_char_t c = p_cp[i];
+        if( c == 0x200E || c == 0x200F
+         || ( c >= 0x202A && c <= 0x202E )
+         || ( c >= 0x2066 && c <= 0x2069 ) )
+            return true;
+    }
+    return false;
+}
+
 /**
- * Checks if a line contains predominantly RTL characters and is not already
- * wrapped with directional marks.
+ * Prepares one line of subtitle text that is mostly Arabic or Hebrew.
+ *
+ * Arabic subtitle files downloaded from the internet are often stored in a
+ * "legacy" order made for players that draw text left to right:
+ * - the final period/question mark is stored at the START of the line, and
+ * - the speaker dash '-' is stored at the END of the line.
+ *
+ * This function swaps them into the correct logical order:
+ * [D-block] + body + [L].
+ *
+ * Returns true when the line is mostly right-to-left (the caller then draws
+ * it right to left).
  */
-static bool ShouldApplyRtlEmbedding( const uni_char_t *p_cp, int i_size )
+static bool PrepareRightToLeftLine( uni_char_t *p_cp, text_style_t **pp_styles,
+                                    ruby_block_t **pp_ruby, int i_size )
 {
     if( i_size <= 0 )
-        return false;
-
-    /* Do not wrap again if the line already starts with an RTL embedding/override mark */
-    if( p_cp[0] == UNICODE_RLE || p_cp[0] == 0x202E || p_cp[0] == 0x200F )
         return false;
 
     int i_rtl = 0, i_latin = 0;
     for( int i = 0; i < i_size; i++ )
     {
+        if( IsSentenceMark( p_cp[i] ) || IsDash( p_cp[i] ) )
+            continue;
         if( IsRtlScriptCodePoint( p_cp[i] ) )
             i_rtl++;
         else if( IsLatinLetterCodePoint( p_cp[i] ) )
             i_latin++;
     }
+    if( i_rtl == 0 || i_rtl < i_latin )
+        return false;
 
-    return ( i_rtl > 0 && i_rtl >= i_latin );
+    /* Skip lines containing bidi control characters: the author already controlled direction */
+    if( HasBidiControlChar( p_cp, i_size ) )
+        return true;
+
+    /* Ignore leading spaces and trailing spaces/tabs when finding ends */
+    int first_non_space = 0;
+    while( first_non_space < i_size
+        && ( p_cp[first_non_space] == ' ' || p_cp[first_non_space] == '\t' ) )
+        first_non_space++;
+
+    int last_non_space = i_size - 1;
+    while( last_non_space >= first_non_space
+        && ( p_cp[last_non_space] == ' ' || p_cp[last_non_space] == '\t' ) )
+        last_non_space--;
+
+    if( first_non_space > last_non_space )
+        return true;
+
+    /* L = run of sentence marks at the very start */
+    int l_start = first_non_space;
+    int l_end = l_start;
+    while( l_end <= last_non_space && IsSentenceMark( p_cp[l_end] ) )
+        l_end++;
+
+    int l_len = l_end - l_start;
+    /* If run starts with two dots, or contains U+2026, treat L as empty (ellipsis) */
+    if( l_len > 0 )
+    {
+        if( l_len >= 2 && p_cp[l_start] == '.' && p_cp[l_start + 1] == '.' )
+            l_len = 0;
+        else
+        {
+            for( int i = l_start; i < l_end; i++ )
+            {
+                if( p_cp[i] == 0x2026 )
+                {
+                    l_len = 0;
+                    break;
+                }
+            }
+        }
+    }
+
+    /* D = dash at very end (after optional spaces): only ONE dash char plus spaces before it */
+    bool has_d = false;
+    int dash_idx = -1;
+    int dash_sp_start = -1;
+    if( IsDash( p_cp[last_non_space] ) )
+    {
+        has_d = true;
+        dash_idx = last_non_space;
+        dash_sp_start = dash_idx;
+        while( dash_sp_start > first_non_space
+            && ( p_cp[dash_sp_start - 1] == ' ' || p_cp[dash_sp_start - 1] == '\t' ) )
+            dash_sp_start--;
+    }
+
+    /* The line is legacy if L is non-empty OR D exists. If neither, change nothing */
+    if( l_len == 0 && !has_d )
+        return true;
+
+    int body_raw_start = ( l_len > 0 ) ? ( l_start + l_len ) : first_non_space;
+    int body_raw_end = has_d ? ( dash_sp_start - 1 ) : last_non_space;
+
+    int body_start = body_raw_start;
+    while( body_start <= body_raw_end
+        && ( p_cp[body_start] == ' ' || p_cp[body_start] == '\t' ) )
+        body_start++;
+
+    int body_end = body_raw_end;
+    while( body_end >= body_start
+        && ( p_cp[body_end] == ' ' || p_cp[body_end] == '\t' ) )
+        body_end--;
+
+    if( body_start > body_end )
+        return true;
+
+    /* Build permutation mapping for [first_non_space .. last_non_space] */
+    int i_active_len = last_non_space - first_non_space + 1;
+    int *p_map = vlc_alloc( i_active_len, sizeof( *p_map ) );
+    if( !p_map )
+        return true;
+
+    int out_pos = 0;
+
+    /* 1. D-block at start: dash followed by spaces that stood before it */
+    if( has_d )
+    {
+        p_map[out_pos++] = dash_idx;
+        for( int sp = dash_sp_start; sp < dash_idx; sp++ )
+            p_map[out_pos++] = sp;
+    }
+
+    /* 2. Spaces between L and body (if any) */
+    for( int sp = body_raw_start; sp < body_start; sp++ )
+        p_map[out_pos++] = sp;
+
+    /* 3. Body */
+    for( int i = body_start; i <= body_end; i++ )
+        p_map[out_pos++] = i;
+
+    /* 4. Spaces between body and D (if any not already part of dash_sp_start) */
+    int sp_end = has_d ? dash_sp_start : ( last_non_space + 1 );
+    for( int sp = body_end + 1; sp < sp_end; sp++ )
+        p_map[out_pos++] = sp;
+
+    /* 5. L at end */
+    if( l_len > 0 )
+    {
+        for( int i = l_start; i < l_start + l_len; i++ )
+            p_map[out_pos++] = i;
+    }
+
+    if( out_pos == i_active_len )
+    {
+        uni_char_t *tmp_cp = vlc_alloc( i_active_len, sizeof( *tmp_cp ) );
+        text_style_t **tmp_styles = pp_styles ? vlc_alloc( i_active_len, sizeof( *tmp_styles ) ) : NULL;
+        ruby_block_t **tmp_ruby = pp_ruby ? vlc_alloc( i_active_len, sizeof( *tmp_ruby ) ) : NULL;
+
+        if( tmp_cp && ( !pp_styles || tmp_styles ) && ( !pp_ruby || tmp_ruby ) )
+        {
+            for( int k = 0; k < i_active_len; k++ )
+            {
+                int src = p_map[k];
+                tmp_cp[k] = p_cp[src];
+                if( pp_styles )
+                    tmp_styles[k] = pp_styles[src];
+                if( pp_ruby )
+                    tmp_ruby[k] = pp_ruby[src];
+            }
+
+            memcpy( &p_cp[first_non_space], tmp_cp, i_active_len * sizeof( *p_cp ) );
+            if( pp_styles )
+                memcpy( &pp_styles[first_non_space], tmp_styles, i_active_len * sizeof( *pp_styles ) );
+            if( pp_ruby )
+                memcpy( &pp_ruby[first_non_space], tmp_ruby, i_active_len * sizeof( *pp_ruby ) );
+        }
+
+        free( tmp_cp );
+        free( tmp_styles );
+        free( tmp_ruby );
+    }
+
+    free( p_map );
+    return true;
 }
 #endif //HAVE_FRIBIDI
 
@@ -1687,70 +1870,46 @@ static paragraph_t * BuildParagraph( filter_t *p_filter,
                                      int i_runs_size,
                                      unsigned *pi_max_advance_x )
 {
-#ifdef HAVE_FRIBIDI
-    bool b_apply_rtl = ( config_GetInt( "freetype-rtl-fix" ) != 0 )
-                    && ShouldApplyRtlEmbedding( p_uchars, i_size );
-
-    uni_char_t *p_wrapped_uchars = NULL;
-    text_style_t **pp_wrapped_styles = NULL;
-    ruby_block_t **pp_wrapped_ruby = NULL;
-
-    if( b_apply_rtl )
-    {
-        int i_new_size = i_size + 2;
-        p_wrapped_uchars = vlc_alloc( i_new_size, sizeof( *p_wrapped_uchars ) );
-        if( pp_styles )
-            pp_wrapped_styles = vlc_alloc( i_new_size, sizeof( *pp_wrapped_styles ) );
-        if( pp_ruby )
-            pp_wrapped_ruby = vlc_alloc( i_new_size, sizeof( *pp_wrapped_ruby ) );
-
-        if( p_wrapped_uchars )
-        {
-            p_wrapped_uchars[0] = UNICODE_RLE;
-            memcpy( &p_wrapped_uchars[1], p_uchars, i_size * sizeof( *p_uchars ) );
-            p_wrapped_uchars[i_size + 1] = UNICODE_PDF;
-
-            if( pp_wrapped_styles && pp_styles )
-            {
-                pp_wrapped_styles[0] = pp_styles[0];
-                memcpy( &pp_wrapped_styles[1], pp_styles, i_size * sizeof( *pp_styles ) );
-                pp_wrapped_styles[i_size + 1] = pp_styles[i_size - 1];
-            }
-
-            if( pp_wrapped_ruby && pp_ruby )
-            {
-                pp_wrapped_ruby[0] = NULL;
-                memcpy( &pp_wrapped_ruby[1], pp_ruby, i_size * sizeof( *pp_ruby ) );
-                pp_wrapped_ruby[i_size + 1] = NULL;
-            }
-
-            p_uchars = p_wrapped_uchars;
-            if( pp_wrapped_styles )
-                pp_styles = pp_wrapped_styles;
-            if( pp_wrapped_ruby )
-                pp_ruby = pp_wrapped_ruby;
-            i_size = i_new_size;
-        }
-    }
-#endif
-
     paragraph_t *p_paragraph = NewParagraph( p_filter, i_size,
                                 p_uchars,
                                 pp_styles,
                                 pp_ruby,
                                 i_runs_size );
-
-#ifdef HAVE_FRIBIDI
-    free( p_wrapped_uchars );
-    free( pp_wrapped_styles );
-    free( pp_wrapped_ruby );
-#endif
-
     if( !p_paragraph )
         return NULL;
 
 #ifdef HAVE_FRIBIDI
-    if( b_apply_rtl )
+    bool b_has_arabic = false;
+    for( int i = 0; i < p_paragraph->i_size; i++ )
+    {
+        if( IsRtlScriptCodePoint( p_paragraph->p_code_points[i] ) )
+        {
+            b_has_arabic = true;
+            break;
+        }
+    }
+    if( b_has_arabic )
+    {
+        char psz_dbg[128];
+        int dbg_len = 0;
+        for( int i = 0; i < p_paragraph->i_size && dbg_len < 100; i++ )
+        {
+            uni_char_t c = p_paragraph->p_code_points[i];
+            if( c >= 32 && c < 127 )
+                dbg_len += snprintf( psz_dbg + dbg_len, sizeof( psz_dbg ) - dbg_len, "%c", (char)c );
+            else
+                dbg_len += snprintf( psz_dbg + dbg_len, sizeof( psz_dbg ) - dbg_len, "U+%04X ", (unsigned)c );
+        }
+        msg_Dbg( p_filter, "rtl-fix=%d line=%.60s",
+                 (int) var_InheritBool( p_filter, "freetype-rtl-fix" ), psz_dbg );
+    }
+
+    /* automatic direction only: a direction chosen in the preferences stays */
+    if( p_paragraph->paragraph_type == FRIBIDI_PAR_ON
+     && var_InheritBool( p_filter, "freetype-rtl-fix" )
+     && PrepareRightToLeftLine( p_paragraph->p_code_points,
+                                p_paragraph->pp_styles, p_paragraph->pp_ruby,
+                                p_paragraph->i_size ) )
         p_paragraph->paragraph_type = FRIBIDI_PAR_RTL;
 
     if( AnalyzeParagraph( p_paragraph ) )

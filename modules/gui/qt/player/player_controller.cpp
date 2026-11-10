@@ -2046,6 +2046,8 @@ void PlayerController::setSubtitleRtlFix(bool enabled)
     if (enabled == getSubtitleRtlFix())
         return;
     config_PutInt("freetype-rtl-fix", enabled ? 1 : 0);
+    msg_Dbg(d->p_intf, "setSubtitleRtlFix: wrote %d read back %lld",
+            enabled ? 1 : 0, (long long) config_GetInt("freetype-rtl-fix"));
     /* Force subtitle renderer to re-render by toggling scale slightly */
     int scale = vlc_player_GetSubtitleTextScale(d->m_player);
     vlc_player_SetSubtitleTextScale(d->m_player, scale == 100 ? 101 : 100);
