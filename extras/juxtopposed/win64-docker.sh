@@ -167,11 +167,14 @@ if [ "$arch" = x86_64 ]; then
 fi
 export JOBS="$jobs"
 rm -rf /build/package
-# If USE_CCACHE=1 and ccache is available, wrap the compiler with it for
-# faster incremental CI builds. CCACHE_DIR is set by the workflow.
+# If USE_CCACHE=1 and ccache is available, intercept only the cross-compiler
+# (x86_64-w64-mingw32-gcc/g++) via PATH symlinks so that extras/tools host
+# builds (ninja, cmake …) still use the plain host gcc and are not wrapped.
 if [ "${USE_CCACHE:-}" = 1 ] && command -v ccache > /dev/null 2>&1; then
-    export CC="ccache $triplet-gcc"
-    export CXX="ccache $triplet-g++"
+    mkdir -p /tmp/ccache-cross
+    ln -sf "$(command -v ccache)" /tmp/ccache-cross/$triplet-gcc
+    ln -sf "$(command -v ccache)" /tmp/ccache-cross/$triplet-g++
+    export PATH="/tmp/ccache-cross:$PATH"
     ccache --max-size=2G
     ccache --zero-stats 2>/dev/null || true
     echo "ccache enabled (dir: ${CCACHE_DIR:-~/.ccache})"
