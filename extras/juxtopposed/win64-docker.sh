@@ -175,7 +175,7 @@ if [ "${USE_CCACHE:-}" = 1 ] && command -v ccache > /dev/null 2>&1; then
     ln -sf "$(command -v ccache)" /tmp/ccache-cross/$triplet-gcc
     ln -sf "$(command -v ccache)" /tmp/ccache-cross/$triplet-g++
     export PATH="/tmp/ccache-cross:$PATH"
-    ccache --max-size=2G
+    ccache --max-size=1G
     ccache --zero-stats 2>/dev/null || true
     echo "ccache enabled (dir: ${CCACHE_DIR:-~/.ccache})"
 fi

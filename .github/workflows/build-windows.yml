@@ -29,7 +29,7 @@ concurrency:
   # a signed run waits for its approvals in SignPath: a push to main must not
   # cancel it (the other runs keep their group)
   group: windows-build-${{ github.ref }}${{ github.event_name == 'workflow_dispatch' && inputs.sign != 'none' && '-signed' || '' }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   # design/tokens.json against the values the code uses (VLCStyle.qml, the
@@ -71,7 +71,8 @@ jobs:
         run: docker build -t vlc-win64-redesign -f extras/juxtopposed/win64.Dockerfile extras/juxtopposed
 
       - name: Restore ccache
-        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4
+        id: ccache
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4
         with:
           path: ccache
           key: ccache-win64-${{ github.sha }}
@@ -96,7 +97,8 @@ jobs:
           # the image's user is not the runner's: let it write the package
           # (and the symbol maps)
           mkdir -p symbols
-          chmod 777 out symbols ccache
+          chmod 777 out symbols
+          chmod -R a+rwX ccache
           docker run --rm \
             -e CONTRIB_ARCHIVE="/cache/$CONTRIB" -e STRIP=1 -e SYMBOLS=/symbols \
             -e CCACHE_DIR=/ccache -e USE_CCACHE=1 \
@@ -104,6 +106,17 @@ jobs:
             vlc-win64-redesign sh -c 'cp /src/extras/juxtopposed/win64-docker.sh /tmp/build.sh && exec sh /tmp/build.sh -r'
           test -s out/vlc.exe
           test -s out/plugins/gui/libqt_plugin.dll
+
+      - name: Save ccache
+        if: always() && steps.ccache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4
+        with:
+          path: ccache
+          key: ${{ steps.ccache.outputs.cache-primary-key }}
+
+      - name: Free disk space
+        if: always()
+        run: df -h /
 
       # (pull requests too: the launch test runs on it)
       - name: Upload the package
