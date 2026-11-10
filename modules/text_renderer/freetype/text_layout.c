@@ -1766,9 +1766,6 @@ static paragraph_t * BuildParagraph( filter_t *p_filter,
     if( LoadGlyphs( p_filter, p_paragraph, true, false, pi_max_advance_x ) )
         goto error;
 
-    if( RemoveZeroWidthCharacters( p_filter, p_paragraph ) )
-        goto error;
-
 #elif defined HAVE_FRIBIDI
     if( ShapeParagraphFriBidi( p_filter, p_paragraph ) )
         goto error;
