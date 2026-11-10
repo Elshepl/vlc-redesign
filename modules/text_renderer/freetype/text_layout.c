@@ -1633,6 +1633,105 @@ error:
     return VLC_EGENERIC;
 }
 
+#ifdef HAVE_FRIBIDI
+/* Right-to-left scripts of the Basic Multilingual Plane: Hebrew, Arabic and
+ * its extensions, and the Arabic presentation forms */
+static bool IsRtlScriptCodePoint( uni_char_t c )
+{
+    return ( c >= 0x0590 && c <= 0x08FF )
+        || ( c >= 0xFB1D && c <= 0xFDFF )
+        || ( c >= 0xFE70 && c <= 0xFEFF );
+}
+
+static bool IsLatinLetterCodePoint( uni_char_t c )
+{
+    return ( c >= 'A' && c <= 'Z' ) || ( c >= 'a' && c <= 'z' )
+        || ( c >= 0x00C0 && c <= 0x024F );
+}
+
+/* The marks that end a sentence, in Latin and in Arabic */
+static bool IsSentenceMark( uni_char_t c )
+{
+    switch( c )
+    {
+        case '.': case ',': case '!': case '?': case ':': case ';':
+        case 0x060C: /* Arabic comma */
+        case 0x061B: /* Arabic semicolon */
+        case 0x061F: /* Arabic question mark */
+            return true;
+        default:
+            return false;
+    }
+}
+
+/**
+ * Prepares one line of subtitle text that is mostly Arabic or Hebrew.
+ *
+ * Many subtitle files were made for players that draw the text from left to
+ * right: they keep the final period (or question mark...) of a right-to-left
+ * line at the START of the line. A player that follows the Unicode rules
+ * then draws it on the wrong side. When the line starts with such a mark and
+ * does not end with one, the mark goes to the end. A leading ellipsis is left
+ * alone: it can be meant.
+ *
+ * Returns true when the line is mostly right-to-left (the caller then draws
+ * it right to left, even when it starts with a number or a Latin word).
+ */
+static bool PrepareRightToLeftLine( uni_char_t *p_cp, text_style_t **pp_styles,
+                                    ruby_block_t **pp_ruby, int i_size )
+{
+    int i_rtl = 0, i_latin = 0;
+    for( int i = 0; i < i_size; i++ )
+    {
+        if( IsSentenceMark( p_cp[i] ) )
+            continue;
+        if( IsRtlScriptCodePoint( p_cp[i] ) )
+            i_rtl++;
+        else if( IsLatinLetterCodePoint( p_cp[i] ) )
+            i_latin++;
+    }
+    if( i_rtl == 0 || i_rtl < i_latin )
+        return false;
+
+    /* the marks at the start of the line */
+    int k = 0;
+    while( k < i_size && IsSentenceMark( p_cp[k] ) )
+        k++;
+    if( k == 0 || k > 4 )
+        return true;
+    if( k > 1 && p_cp[0] == '.' && p_cp[1] == '.' )
+        return true; /* an ellipsis */
+
+    /* the end of the text (the line may end with spaces) */
+    int e = i_size;
+    while( e > k && ( p_cp[e - 1] == ' ' || p_cp[e - 1] == '\t' ) )
+        e--;
+    if( e <= k || IsSentenceMark( p_cp[e - 1] ) )
+        return true; /* only marks, or already ending with one */
+
+    /* the marks go to the end: [0, e) turns left by k */
+    uni_char_t tmp_cp[4];
+    text_style_t *tmp_style[4];
+    ruby_block_t *tmp_ruby[4];
+    memcpy( tmp_cp, p_cp, k * sizeof( *p_cp ) );
+    memmove( p_cp, p_cp + k, ( e - k ) * sizeof( *p_cp ) );
+    memcpy( p_cp + ( e - k ), tmp_cp, k * sizeof( *p_cp ) );
+    if( pp_styles )
+    {
+        memcpy( tmp_style, pp_styles, k * sizeof( *pp_styles ) );
+        memmove( pp_styles, pp_styles + k, ( e - k ) * sizeof( *pp_styles ) );
+        memcpy( pp_styles + ( e - k ), tmp_style, k * sizeof( *pp_styles ) );
+    }
+    if( pp_ruby )
+    {
+        memcpy( tmp_ruby, pp_ruby, k * sizeof( *pp_ruby ) );
+        memmove( pp_ruby, pp_ruby + k, ( e - k ) * sizeof( *pp_ruby ) );
+        memcpy( pp_ruby + ( e - k ), tmp_ruby, k * sizeof( *pp_ruby ) );
+    }
+    return true;
+}
+#endif //HAVE_FRIBIDI
+
 static paragraph_t * BuildParagraph( filter_t *p_filter,
                                      int i_size,
                                      const uni_char_t *p_uchars,
@@ -1650,6 +1749,14 @@ static paragraph_t * BuildParagraph( filter_t *p_filter,
         return NULL;
 
 #ifdef HAVE_FRIBIDI
+    /* automatic direction only: a direction chosen in the preferences stays */
+    if( p_paragraph->paragraph_type == FRIBIDI_PAR_ON
+     && var_InheritBool( p_filter, "freetype-rtl-fix" )
+     && PrepareRightToLeftLine( p_paragraph->p_code_points,
+                                p_paragraph->pp_styles, p_paragraph->pp_ruby,
+                                p_paragraph->i_size ) )
+        p_paragraph->paragraph_type = FRIBIDI_PAR_RTL;
+
     if( AnalyzeParagraph( p_paragraph ) )
         goto error;
 #endif

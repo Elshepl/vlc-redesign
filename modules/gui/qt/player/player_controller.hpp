@@ -182,6 +182,7 @@ public:
     // Shift+Up and Shift+Down keep the place)
     Q_PROPERTY(int subtitlePosition READ getSubtitlePosition WRITE setSubtitlePosition NOTIFY subtitlePositionChanged FINAL)
     Q_PROPERTY(int subtitleTextScale READ getSubtitleTextScale WRITE setSubtitleTextScale NOTIFY subtitleTextScaleChanged FINAL)
+    Q_PROPERTY(bool subtitleRtlFix READ getSubtitleRtlFix WRITE setSubtitleRtlFix NOTIFY subtitleRtlFixChanged FINAL)
     Q_PROPERTY(TimedText currentLyric READ getCurrentLyric NOTIFY currentLyricChanged FINAL)
     Q_PROPERTY(bool hasLyrics READ hasLyrics NOTIFY hasLyricsChanged FINAL)
     Q_PROPERTY(QList<TimedText> syltLyrics READ getSyltLyrics NOTIFY syltLyricsChanged FINAL)
@@ -392,6 +393,8 @@ public slots:
     void setSubtitlePosition( int );
     int getSubtitleTextScale() const;
     void setSubtitleTextScale( int );
+    bool getSubtitleRtlFix() const;
+    void setSubtitleRtlFix( bool );
     // the two above read again (a shortcut changed them meanwhile)
     Q_INVOKABLE void refreshSubtitleLook();
     // One step of the subtitle text scale as VLC's hotkeys make it (10 near
@@ -512,6 +515,7 @@ signals:
     void subtitleClearanceChanged(qreal);
     void subtitlePositionChanged(int);
     void subtitleTextScaleChanged(int);
+    void subtitleRtlFixChanged(bool);
     // a key or the wheel changed it (Ctrl+wheel over the video): shown a moment
     void subtitleTextScaleStepped(int scale, const QString &shortcut);
 

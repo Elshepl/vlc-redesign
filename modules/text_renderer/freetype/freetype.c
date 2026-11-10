@@ -214,6 +214,14 @@ vlc_module_begin ()
                             TEXT_DIRECTION_LONGTEXT )
         change_integer_list( pi_text_direction, ppsz_text_direction )
         change_safe()
+            add_bool( "freetype-rtl-fix", true,
+              N_("Fix right-to-left subtitle punctuation"),
+              N_("Arabic and Hebrew lines whose final punctuation is stored at "
+                 "the start of the line (a convention of older subtitle "
+                 "files) are shown with it at the end, and mostly "
+                 "right-to-left lines are drawn right to left. Works with "
+                 "the automatic text direction only.") )
+        change_safe()
 #endif
 
     add_shortcut( "text" )

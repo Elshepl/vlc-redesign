@@ -574,6 +574,31 @@ ColumnLayout {
             onHigher: Player.stepSubtitleTextScale(1, false)
             onReset: Player.stepSubtitleTextScale(0, false)
         }
+
+                // Arabic and Hebrew: the final punctuation of a line is shown at its
+        // end when the subtitle file keeps it at the start (freetype-rtl-fix)
+        RowLayout {
+            objectName: "subtitleRtlFixRow"
+            Layout.fillWidth: true
+            spacing: VLCStyle.dp(4, VLCStyle.scale)
+
+            Controls.Label {
+                Layout.fillWidth: true
+                horizontalAlignment: Text.AlignLeft
+                text: qsTr("Fix Arabic punctuation")
+                elide: Text.ElideRight
+                color: VLCStyle.redesign.color("#969696", "#4d4d4d")
+                font.family: VLCStyle.redesign.fontFamily
+                font.pixelSize: VLCStyle.dp(13, VLCStyle.scale)
+            }
+            LookButton {
+                objectName: "subtitleRtlFixToggle"
+                text: Player.subtitleRtlFix ? qsTr("On") : qsTr("Off")
+                autoRepeat: false
+                Accessible.name: qsTr("Fix the punctuation of Arabic and Hebrew subtitles")
+                onClicked: Player.subtitleRtlFix = !Player.subtitleRtlFix
+            }
+        }
     }
 
     // A title, − its value + and Reset (the buttons repeat while held)

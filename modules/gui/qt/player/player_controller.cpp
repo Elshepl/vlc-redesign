@@ -2035,6 +2035,21 @@ void PlayerController::setSubtitlePosition(int position)
     emit subtitlePositionChanged(position);
 }
 
+bool PlayerController::getSubtitleRtlFix() const
+{
+    return config_GetInt("freetype-rtl-fix") != 0;
+}
+
+void PlayerController::setSubtitleRtlFix(bool enabled)
+{
+    Q_D(PlayerController);
+    if (enabled == getSubtitleRtlFix())
+        return;
+    config_PutInt("freetype-rtl-fix", enabled ? 1 : 0);
+    vlc_player_SetSubtitleTextScale(d->m_player, vlc_player_GetSubtitleTextScale(d->m_player));
+    emit subtitleRtlFixChanged(enabled);
+}
+
 int PlayerController::getSubtitleTextScale() const
 {
     Q_D(const PlayerController);
