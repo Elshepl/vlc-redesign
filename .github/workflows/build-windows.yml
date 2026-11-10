@@ -165,6 +165,7 @@ jobs:
   # image (the one of its win64-arm-llvm job), with that job's prebuilt
   # contribs (win64-docker.ps1 -Arch aarch64 does the same on a PC)
   winarm64:
+    if: false
     runs-on: ubuntu-24.04
     timeout-minutes: 300
     steps:

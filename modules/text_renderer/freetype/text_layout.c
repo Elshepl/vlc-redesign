@@ -1634,6 +1634,9 @@ error:
 }
 
 #ifdef HAVE_FRIBIDI
+#define UNICODE_RLE 0x202B
+#define UNICODE_PDF 0x202C
+
 /* Right-to-left scripts of the Basic Multilingual Plane: Hebrew, Arabic and
  * its extensions, and the Arabic presentation forms */
 static bool IsRtlScriptCodePoint( uni_char_t c )
@@ -1650,16 +1653,17 @@ static bool IsLatinLetterCodePoint( uni_char_t c )
 }
 
 /**
- * Determines whether a line is predominantly right-to-left (Arabic/Hebrew).
- * Returns true to force paragraph base direction to RTL, ensuring dialogue
- * dashes and sentence-ending punctuation are rendered in the proper visual order
- * without modifying the underlying character array.
+ * Checks if a line contains predominantly RTL characters and is not already
+ * wrapped with directional marks.
  */
-static bool PrepareRightToLeftLine( uni_char_t *p_cp, text_style_t **pp_styles,
-                                    ruby_block_t **pp_ruby, int i_size )
+static bool ShouldApplyRtlEmbedding( const uni_char_t *p_cp, int i_size )
 {
-    VLC_UNUSED(pp_styles);
-    VLC_UNUSED(pp_ruby);
+    if( i_size <= 0 )
+        return false;
+
+    /* Do not wrap again if the line already starts with an RTL embedding/override mark */
+    if( p_cp[0] == UNICODE_RLE || p_cp[0] == 0x202E || p_cp[0] == 0x200F )
+        return false;
 
     int i_rtl = 0, i_latin = 0;
     for( int i = 0; i < i_size; i++ )
@@ -1682,21 +1686,70 @@ static paragraph_t * BuildParagraph( filter_t *p_filter,
                                      int i_runs_size,
                                      unsigned *pi_max_advance_x )
 {
+#ifdef HAVE_FRIBIDI
+    bool b_apply_rtl = var_InheritBool( p_filter, "freetype-rtl-fix" )
+                    && ShouldApplyRtlEmbedding( p_uchars, i_size );
+
+    uni_char_t *p_wrapped_uchars = NULL;
+    text_style_t **pp_wrapped_styles = NULL;
+    ruby_block_t **pp_wrapped_ruby = NULL;
+
+    if( b_apply_rtl )
+    {
+        int i_new_size = i_size + 2;
+        p_wrapped_uchars = vlc_alloc( i_new_size, sizeof( *p_wrapped_uchars ) );
+        if( pp_styles )
+            pp_wrapped_styles = vlc_alloc( i_new_size, sizeof( *pp_wrapped_styles ) );
+        if( pp_ruby )
+            pp_wrapped_ruby = vlc_alloc( i_new_size, sizeof( *pp_wrapped_ruby ) );
+
+        if( p_wrapped_uchars )
+        {
+            p_wrapped_uchars[0] = UNICODE_RLE;
+            memcpy( &p_wrapped_uchars[1], p_uchars, i_size * sizeof( *p_uchars ) );
+            p_wrapped_uchars[i_size + 1] = UNICODE_PDF;
+
+            if( pp_wrapped_styles && pp_styles )
+            {
+                pp_wrapped_styles[0] = pp_styles[0];
+                memcpy( &pp_wrapped_styles[1], pp_styles, i_size * sizeof( *pp_styles ) );
+                pp_wrapped_styles[i_size + 1] = pp_styles[i_size - 1];
+            }
+
+            if( pp_wrapped_ruby && pp_ruby )
+            {
+                pp_wrapped_ruby[0] = NULL;
+                memcpy( &pp_wrapped_ruby[1], pp_ruby, i_size * sizeof( *pp_ruby ) );
+                pp_wrapped_ruby[i_size + 1] = NULL;
+            }
+
+            p_uchars = p_wrapped_uchars;
+            if( pp_wrapped_styles )
+                pp_styles = pp_wrapped_styles;
+            if( pp_wrapped_ruby )
+                pp_ruby = pp_wrapped_ruby;
+            i_size = i_new_size;
+        }
+    }
+#endif
+
     paragraph_t *p_paragraph = NewParagraph( p_filter, i_size,
                                 p_uchars,
                                 pp_styles,
                                 pp_ruby,
                                 i_runs_size );
+
+#ifdef HAVE_FRIBIDI
+    free( p_wrapped_uchars );
+    free( pp_wrapped_styles );
+    free( pp_wrapped_ruby );
+#endif
+
     if( !p_paragraph )
         return NULL;
 
 #ifdef HAVE_FRIBIDI
-    /* automatic direction only: a direction chosen in the preferences stays */
-    if( p_paragraph->paragraph_type == FRIBIDI_PAR_ON
-     && var_InheritBool( p_filter, "freetype-rtl-fix" )
-     && PrepareRightToLeftLine( p_paragraph->p_code_points,
-                                p_paragraph->pp_styles, p_paragraph->pp_ruby,
-                                p_paragraph->i_size ) )
+    if( b_apply_rtl )
         p_paragraph->paragraph_type = FRIBIDI_PAR_RTL;
 
     if( AnalyzeParagraph( p_paragraph ) )
@@ -1711,6 +1764,9 @@ static paragraph_t * BuildParagraph( filter_t *p_filter,
         goto error;
 
     if( LoadGlyphs( p_filter, p_paragraph, true, false, pi_max_advance_x ) )
+        goto error;
+
+    if( RemoveZeroWidthCharacters( p_filter, p_paragraph ) )
         goto error;
 
 #elif defined HAVE_FRIBIDI
